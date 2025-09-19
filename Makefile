@@ -37,7 +37,7 @@ base-build:
 	             --target SYSTEM ./images/; \
 	docker build --tag openwisp/openwisp-base:intermedia-python \
 	             --file ./images/openwisp_base/Dockerfile \
-	             --target PYTHON ./images/ \
+	             --target openwisp_python ./images/ \
 	             $$BUILD_ARGS; \
 	docker build --tag openwisp/openwisp-base:latest \
 	             --file ./images/openwisp_base/Dockerfile ./images/ \
