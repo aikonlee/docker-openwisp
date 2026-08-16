@@ -1,11 +1,11 @@
-# hadolint ignore=DL3007
 FROM lisenet/openvpn:2.7.5
 
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
-            curl \
-            tzdata \
-            supervisor && \
+        openvpn \
+        curl \
+        tzdata \
+        supervisor && \
     rm -rf /var/cache/apk/* /tmp/*
 CMD ["sh", "init_command.sh"]
 EXPOSE 1194

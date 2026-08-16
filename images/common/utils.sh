@@ -41,22 +41,43 @@ create_prod_certs() {
 	fi
 }
 
+is_cert_expired() {
+	# Check if certificate exists and will expire within 30 days
+	local cert_file="$1"
+	if [ ! -f "$cert_file" ]; then
+		return 0 # Not expired, doesn't exist
+	fi
+	local expiry_epoch=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | cut -d= -f2 | xargs -I {} date -d "{}" +%s 2>/dev/null)
+	if [ -z "$expiry_epoch" ]; then
+		return 0 # Cannot parse, assume valid
+	fi
+	local current_epoch=$(date +%s)
+	local diff=$((expiry_epoch - current_epoch))
+	[ $diff -lt 2592000 ] # 30 days in seconds = 2592000
+}
+
 create_dev_certs() {
 	# Ensure required directories exist
 	mkdir -p /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/
 	mkdir -p /etc/letsencrypt/live/${API_DOMAIN}/
-	# Create self-signed certificates
-	if [ ! -f /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/privkey.pem ]; then
+	# Create self-signed certificates with 3650 days validity (10 years)
+	# Check if dashboard certificate is missing or expiring
+	if [ ! -f /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/privkey.pem ] || is_cert_expired /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/fullchain.pem; then
 		openssl req -x509 -newkey rsa:4096 \
 			-keyout /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/privkey.pem \
 			-out /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/fullchain.pem \
-			-days 365 -nodes -subj '/CN=OpenWISP'
+			-days 3650 -nodes -subj '/CN=OpenWISP' -addext "subjectAltName=DNS:${DASHBOARD_DOMAIN},DNS:*.${DASHBOARD_DOMAIN}"
+		chmod 600 /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/privkey.pem
+		chmod 644 /etc/letsencrypt/live/${DASHBOARD_DOMAIN}/fullchain.pem
 	fi
-	if [ ! -f /etc/letsencrypt/live/${API_DOMAIN}/privkey.pem ]; then
+	# Check if API certificate is missing or expiring
+	if [ ! -f /etc/letsencrypt/live/${API_DOMAIN}/privkey.pem ] || is_cert_expired /etc/letsencrypt/live/${API_DOMAIN}/fullchain.pem; then
 		openssl req -x509 -newkey rsa:4096 \
 			-keyout /etc/letsencrypt/live/${API_DOMAIN}/privkey.pem \
 			-out /etc/letsencrypt/live/${API_DOMAIN}/fullchain.pem \
-			-days 365 -nodes -subj '/CN=OpenWISP'
+			-days 3650 -nodes -subj '/CN=OpenWISP' -addext "subjectAltName=DNS:${API_DOMAIN},DNS:*.${API_DOMAIN}"
+		chmod 600 /etc/letsencrypt/live/${API_DOMAIN}/privkey.pem
+		chmod 644 /etc/letsencrypt/live/${API_DOMAIN}/fullchain.pem
 	fi
 }
 
@@ -121,13 +142,15 @@ postfix_config() {
 	# This function is used to configure the
 	# postfix instance.
 
-	mkdir -p /var/spool/postfix/ /var/spool/postfix/pid /var/lib/postfix/
+	mkdir -p /var/spool/postfix/ /var/spool/postfix/pid /var/lib/postfix/ /etc/ssl/mail/
 	chmod 755 /var/spool/postfix/ /var/spool/postfix/pid /var/lib/postfix/
 	rm -rf /etc/aliases /etc/postfix/generic /etc/allowed_senders /etc/postfix/main.cf /var/run/rsyslogd.pid
 	touch /etc/aliases /etc/postfix/generic /etc/allowed_senders /etc/postfix/main.cf
-	# Create ssl-certs
-	if [ ! -f /etc/ssl/mail/openwisp.mail.key ]; then
+	# Create ssl-certs (check expiration and regenerate if needed)
+	if [ ! -f /etc/ssl/mail/openwisp.mail.key ] || is_cert_expired /etc/ssl/mail/openwisp.mail.crt; then
 		openssl req -new -nodes -x509 -subj '/CN=openwisp-postfix' -days 3650 -keyout /etc/ssl/mail/openwisp.mail.key -out /etc/ssl/mail/openwisp.mail.crt -extensions v3_ca
+		chmod 600 /etc/ssl/mail/openwisp.mail.key
+		chmod 644 /etc/ssl/mail/openwisp.mail.crt
 	fi
 
 	# Disable SMTPUTF8, because libraries (ICU) are missing in alpine

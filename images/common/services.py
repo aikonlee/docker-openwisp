@@ -24,6 +24,12 @@ def database_status():
         ):
             pass
     except psycopg.OperationalError:
+        try:
+            import traceback
+
+            traceback.print_exc()
+        except Exception:
+            pass
         time.sleep(3)
         return False
     else:

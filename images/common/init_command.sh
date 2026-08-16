@@ -1,7 +1,7 @@
 #!/bin/sh
 # OpenWISP common module init script
 set -e
-source utils.sh
+. ./utils.sh
 
 init_conf
 
@@ -22,11 +22,55 @@ elif [ "$MODULE_NAME" = 'postfix' ]; then
 	postfix start
 	rsyslogd -n
 elif [ "$MODULE_NAME" = 'freeradius' ]; then
+	# Ensure rest module is not enabled at runtime (some builds may include
+	# rest files). Remove any rest* files from mods-enabled before starting.
+	rm -f /etc/raddb/mods-enabled/*rest* || true
 	wait_nginx_services
-	if [ "$DEBUG_MODE" = 'False' ]; then
-		source docker-entrypoint.sh
+	# Wait for DB schema required by FreeRADIUS (e.g. 'nas' table) to exist
+	# This prevents radiusd from exiting with 'relation "nas" does not exist'.
+	# Use PGPASSWORD/PGHOST/PGPORT/PGUSER from env (set in Dockerfile).
+	set +e
+	echo "Waiting for database schema (nas table) to be available..."
+	FOUND=0
+	for i in $(seq 1 60); do
+		psql -qtAX -c "SELECT to_regclass('public.nas');" 2>/dev/null | grep -q "nas" && {
+			echo "DB schema present"
+			FOUND=1
+			break
+		} || true
+		sleep 2
+	done
+	set -e
+	if [ "$FOUND" != "1" ]; then
+		echo "Warning: 'nas' table not found after timeout; FreeRADIUS may fail to load clients from SQL. Continuing startup."
+	fi
+	# Some base images provide a docker-entrypoint.sh that sets up and runs
+	# freeradius. If it's missing (we use alpine + apk), fall back to calling
+	# radiusd directly. In debug mode run in foreground (-X) for logs.
+	# Prefer docker-entrypoint.sh if present in any common locations
+	if [ -f ./docker-entrypoint.sh ]; then
+		ENTRYPOINT=./docker-entrypoint.sh
+	elif [ -f /docker-entrypoint.sh ]; then
+		ENTRYPOINT=/docker-entrypoint.sh
+	elif [ -f /usr/local/bin/docker-entrypoint.sh ]; then
+		ENTRYPOINT=/usr/local/bin/docker-entrypoint.sh
 	else
-		source docker-entrypoint.sh -X
+		ENTRYPOINT=
+	fi
+	if [ -n "$ENTRYPOINT" ]; then
+		# Exec the entrypoint so it becomes PID 1 (keeps container running)
+		if [ "$DEBUG_MODE" = 'False' ]; then
+			exec "$ENTRYPOINT"
+		else
+			exec "$ENTRYPOINT" -X
+		fi
+	else
+		# Fallback to running radiusd directly. Exec so radiusd becomes PID 1
+		if [ "$DEBUG_MODE" = 'False' ]; then
+			exec radiusd -f
+		else
+			exec radiusd -X
+		fi
 	fi
 elif [ "$MODULE_NAME" = 'openvpn' ]; then
 	if [[ -z "$VPN_DOMAIN" ]]; then exit; fi
