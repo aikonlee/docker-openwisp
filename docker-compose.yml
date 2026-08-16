@@ -1,7 +1,7 @@
 x-celery-depends-on: &celery-depends-on
   depends_on:
     postgres:
-      condition: service_started
+      condition: service_healthy
     redis:
       condition: service_started
     dashboard:
@@ -31,10 +31,14 @@ services:
       - ./customization/configuration/django/:/opt/openwisp/openwisp/configuration:ro
       - ./customization/theme:/opt/openwisp/static_custom:ro
     depends_on:
-      - postgres
-      - redis
-      - postfix
-      - influxdb
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      postfix:
+        condition: service_started
+      influxdb:
+        condition: service_started
 
   api:
     image: openwisp/openwisp-api:${OPENWISP_VERSION:-edge}
@@ -53,9 +57,12 @@ services:
       - openwisp_private_storage:/opt/openwisp/private
       - ./customization/configuration/django/:/opt/openwisp/openwisp/configuration:ro
     depends_on:
-      - postgres
-      - redis
-      - dashboard
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      dashboard:
+        condition: service_started
 
   websocket:
     image: openwisp/openwisp-websocket:${OPENWISP_VERSION:-edge}
@@ -155,9 +162,18 @@ services:
       - "1812:1812/udp"
       - "1813:1813/udp"
     depends_on:
-      - postgres
-      - api
-      - dashboard
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+      dashboard:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f radiusd >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   postfix:
     image: openwisp/openwisp-postfix:${OPENWISP_VERSION:-edge}
@@ -181,7 +197,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     cap_add:
       - NET_ADMIN
     devices:
@@ -203,6 +220,16 @@ services:
       - TZ=$TZ
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   influxdb:
     image: influxdb:1.8-alpine

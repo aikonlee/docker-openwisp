@@ -9,6 +9,17 @@ RELEASE_VERSION = $(shell cat images/common/openwisp/VERSION)
 SHELL := /bin/bash
 .SILENT: clean pull start stop
 
+# Detect host architecture at make time. When running on arm64 / aarch64,
+# include the non-destructive override that points to arm64-friendly images.
+ARCH := $(shell uname -m)
+COMPOSE_FILES := -f docker-compose.yml
+ifeq ($(ARCH),aarch64)
+COMPOSE_FILES := -f docker-compose.yml -f docker-compose.arm64.yml
+endif
+ifeq ($(ARCH),arm64)
+COMPOSE_FILES := -f docker-compose.yml -f docker-compose.arm64.yml
+endif
+
 default: compose-build
 
 USER = registry.gitlab.com/openwisp/docker-openwisp
@@ -57,7 +68,36 @@ nfs-build:
 	             --file ./images/openwisp_nfs/Dockerfile ./images/
 
 compose-build: base-build
-	docker compose build --parallel
+	docker compose $(COMPOSE_FILES) build --parallel
+
+# Build images natively for local arm64 host and tag them with :arm64-local
+.PHONY: arm64-local-build
+arm64-local-build:
+	@echo "Building openwisp base (arm64-local)"
+	BUILD_ARGS_FILE=$$(cat .build.env 2>/dev/null); \
+	for build_arg in $$BUILD_ARGS_FILE; do \
+	    BUILD_ARGS+=" --build-arg $$build_arg"; \
+	done; \
+	docker build --platform linux/arm64 --tag openwisp/openwisp-base:intermedia-system \
+			 --file ./images/openwisp_base/Dockerfile \
+			 --target system ./images/; \
+	docker build --platform linux/arm64 --tag openwisp/openwisp-base:intermedia-python \
+			 --file ./images/openwisp_base/Dockerfile \
+			 --target openwisp_python ./images/ $$BUILD_ARGS; \
+	docker build --platform linux/arm64 --tag openwisp/openwisp-base:arm64-local \
+			 --file ./images/openwisp_base/Dockerfile ./images/ $$BUILD_ARGS;
+
+	@echo "Building runtime images (arm64-local tags)"
+	# build other images that include compiled binaries
+	docker build --platform linux/arm64 --tag openwisp/openwisp-dashboard:arm64-local --file ./images/openwisp_dashboard/Dockerfile ./images/
+	docker build --platform linux/arm64 --tag openwisp/openwisp-api:arm64-local --file ./images/openwisp_api/Dockerfile ./images/
+	docker build --platform linux/arm64 --tag openwisp/openwisp-websocket:arm64-local --file ./images/openwisp_websocket/Dockerfile ./images/
+	docker build --platform linux/arm64 --tag openwisp/openwisp-freeradius:arm64-local --file ./images/openwisp_freeradius/Dockerfile ./images/
+	docker build --platform linux/arm64 --tag openwisp/openwisp-openvpn:arm64-local --file ./images/openwisp_openvpn/Dockerfile ./images/
+	docker build --platform linux/arm64 --tag openwisp/openwisp-postfix:arm64-local --file ./images/openwisp_postfix/Dockerfile ./images/
+	# PostGIS (postgres) image
+	docker build --platform linux/arm64 --tag openwisp/postgis:arm64-local --file ./images/postgis/Dockerfile ./images/
+
 
 # Test
 runtests:
@@ -65,23 +105,24 @@ runtests:
 	docker compose stop
 
 develop-runtests:
-	docker compose up -d
+	docker compose $(COMPOSE_FILES) up -d
 	make develop-pythontests
 
 develop-pythontests:
 	python3 tests/runtests.py
 
 # Development
+
 develop: compose-build
-	docker compose up -d
-	docker compose logs -f
+	docker compose $(COMPOSE_FILES) up -d
+	docker compose $(COMPOSE_FILES) logs -f
 
 # Clean
 clean:
 	printf '\e[1;34m%-6s\e[m\n' "Removing docker-openwisp..."
-	docker compose stop &> /dev/null
-	docker compose down --remove-orphans --volumes --rmi all &> /dev/null
-	docker compose rm -svf &> /dev/null
+	docker compose $(COMPOSE_FILES) stop &> /dev/null
+	docker compose $(COMPOSE_FILES) down --remove-orphans --volumes --rmi all &> /dev/null
+	docker compose $(COMPOSE_FILES) rm -svf &> /dev/null
 	docker rmi --force openwisp/openwisp-base:intermedia-system \
 				openwisp/openwisp-base:intermedia-python \
 				$(IMAGE_OWNER)/openwisp-base:$(OPENWISP_VERSION) \
@@ -95,14 +136,14 @@ start:
 		make pull; \
 	fi
 	printf '\e[1;34m%-6s\e[m\n' "Starting Services..."
-	docker --log-level WARNING compose up -d
+	docker --log-level WARNING compose $(COMPOSE_FILES) up -d
 	printf '\e[1;32m%-6s\e[m\n' "Success: OpenWISP should be available at your dashboard domain in 2 minutes."
 
 stop:
 	printf '\e[1;31m%-6s\e[m\n' "Stopping OpenWISP services..."
-	docker --log-level ERROR compose stop
-	docker --log-level ERROR compose down --remove-orphans
-	docker compose down --remove-orphans &> /dev/null
+	docker --log-level ERROR compose $(COMPOSE_FILES) stop
+	docker --log-level ERROR compose $(COMPOSE_FILES) down --remove-orphans
+	docker compose $(COMPOSE_FILES) down --remove-orphans &> /dev/null
 
 # Publish
 publish:
@@ -132,3 +173,20 @@ bump:
 		exit 1; \
 	fi
 	python build.py bump-version "$(VERSION)"
+
+# Certificate Management
+.PHONY: cert-audit
+cert-audit:
+	@./scripts/check-certificates.sh
+
+.PHONY: cert-renew
+cert-renew:
+	@./scripts/renew-certificates.sh all
+
+.PHONY: cert-renew-nginx
+cert-renew-nginx:
+	@./scripts/renew-certificates.sh nginx
+
+.PHONY: cert-renew-postfix
+cert-renew-postfix:
+	@./scripts/renew-certificates.sh postfix

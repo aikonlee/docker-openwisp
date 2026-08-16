@@ -1,0 +1,72 @@
+version: "3.8"
+services:
+  # Use non-alpine InfluxDB which has multi-arch manifests
+  influxdb:
+    image: influxdb:1.8
+
+  # Use a PostGIS tag likely to include arm64; avoid alpine-only variants
+  postgres:
+    image: openwisp/postgis:arm64-local
+    platform: linux/arm64
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: ["postgres"]
+    build:
+      context: ./images
+      dockerfile: postgis/Dockerfile
+
+  # Prefer a named redis tag that has arm64 builds
+  redis:
+    image: redis:7-alpine
+
+  # For services that declare both image and build in the main compose file,
+  # override the image name so Compose builds a local arm64 image instead of
+  # trying to pull the upstream amd64:latest tag.
+  dashboard:
+    image: openwisp/openwisp-dashboard:arm64-local
+    platform: linux/arm64
+    environment:
+      - USE_OPENWISP_RADIUS=False
+
+  api:
+    image: openwisp/openwisp-api:arm64-local
+    platform: linux/arm64
+    environment:
+      - USE_OPENWISP_RADIUS=False
+
+  websocket:
+    image: openwisp/openwisp-websocket:arm64-local
+    platform: linux/arm64
+    environment:
+      - USE_OPENWISP_RADIUS=False
+
+  freeradius:
+    image: openwisp/openwisp-freeradius:arm64-local
+    platform: linux/arm64
+    environment:
+      - USE_OPENWISP_RADIUS=False
+
+  postfix:
+    image: openwisp/openwisp-postfix:arm64-local
+    platform: linux/arm64
+
+  openvpn:
+    image: openwisp/openwisp-openvpn:arm64-local
+    platform: linux/arm64
+    environment:
+      - USE_OPENWISP_RADIUS=False
+
+  celery:
+    image: openwisp/openwisp-dashboard:arm64-local
+    platform: linux/arm64
+
+  celery_monitoring:
+    image: openwisp/openwisp-dashboard:arm64-local
+    platform: linux/arm64
+
+  celerybeat:
+    image: openwisp/openwisp-dashboard:arm64-local
+    platform: linux/arm64
+
+  nginx:
+    image: openwisp/openwisp-nginx:arm64-local
+    platform: linux/arm64

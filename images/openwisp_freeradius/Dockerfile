@@ -2,8 +2,12 @@ FROM freeradius/freeradius-server:3.2.10-alpine
 
 # hadolint ignore=DL3018
 RUN apk add --no-cache --update \
-            tzdata \
-            postgresql17-client && \
+        tzdata \
+        postgresql17-client \
+        freeradius \
+        freeradius-utils \
+        freeradius-sql \
+        freeradius-postgresql && \
     rm -rf /var/cache/apk/* /tmp/*
 
 RUN addgroup -S freerad && \
@@ -15,10 +19,15 @@ EXPOSE 1812/udp 1813/udp
 # hadolint ignore=DL3045
 COPY ./common/init_command.sh \
     ./common/utils.sh ./
+RUN chmod +x ./init_command.sh
 COPY ./openwisp_freeradius/raddb/ /etc/raddb/
-RUN chown -R freerad:root /opt/etc/raddb/ && \
-    chmod -R go-w /opt/etc/raddb/ && \
-    chown -R freerad:root /opt/var/log/
+# Ensure no rest module is present in mods-enabled (some files may have been
+# included in the repo accidentally). Delete any rest* files here explicitly.
+RUN rm -f /etc/raddb/mods-enabled/*rest* || true && \
+    rm -f /etc/raddb/mods-enabled/*rest*.disabled || true && \
+    chown -R freerad:root /etc/raddb/ && \
+    chmod -R go-w /etc/raddb/ && \
+    chown -R freerad:root /var/log/
 
 ENV TZ=UTC \
     MODULE_NAME=freeradius \
